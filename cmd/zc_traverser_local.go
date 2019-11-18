@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -68,6 +69,43 @@ func (t *localTraverser) getInfoIfSingleFile() (os.FileInfo, bool, error) {
 	return fileInfo, true, nil
 }
 
+func UnfurlSymlinks(symlinkPath string) (result string, err error) {
+	unfurlingPlan := []string{symlinkPath}
+
+	for len(unfurlingPlan) > 0 {
+		item := unfurlingPlan[0]
+
+		fi, err := os.Lstat(item)
+
+		if err != nil {
+			return item, err
+		}
+
+		if fi.Mode()&os.ModeSymlink != 0 {
+			result, err := os.Readlink(item)
+
+			if err != nil {
+				return result, err
+			}
+
+			sameDir := filepath.Join(filepath.Dir(item), result)
+			if _, err = os.Stat(sameDir); err == nil {
+				result = sameDir
+			} else {
+				result = common.ToExtendedPath(result)
+			}
+
+			unfurlingPlan = append(unfurlingPlan, result)
+		} else {
+			return item, nil
+		}
+
+		unfurlingPlan = unfurlingPlan[1:]
+	}
+
+	return "", errors.New("failed to unfurl symlink: exited loop early")
+}
+
 // Separate this from the traverser for two purposes:
 // 1) Cleaner code
 // 2) Easier to test individually than to test the entire traverser.
@@ -105,7 +143,7 @@ func WalkWithSymlinks(fullPath string, walkFunc filepath.WalkFunc) (err error) {
 			computedRelativePath = strings.TrimPrefix(computedRelativePath, common.AZCOPY_PATH_SEPARATOR_STRING)
 
 			if fileInfo.Mode()&os.ModeSymlink != 0 {
-				result, err := filepath.EvalSymlinks(filePath)
+				result, err := UnfurlSymlinks(filePath)
 
 				if err != nil {
 					glcm.Info(fmt.Sprintf("Failed to resolve symlink %s: %s", filePath, err))
